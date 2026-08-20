@@ -877,6 +877,8 @@ export type AssetResponseDto = {
     checksum: string;
     /** The UTC timestamp when the asset was originally uploaded to Immich. */
     createdAt: string;
+    /** Cosine distance between the search embedding and this asset, where lower means more similar. Only populated by smart search; every other endpoint omits it. The distance is exact for the assets that are returned, but the set of returned assets comes from an approximate nearest neighbour index, so a missing asset does not necessarily have a higher distance than the ones listed. The values are not calibrated across queries or CLIP models, so a fixed threshold is not portable. */
+    distance?: number;
     /** Duplicate group ID */
     duplicateId?: string | null;
     /** Video/gif duration in milliseconds (null for static images) */

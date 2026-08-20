@@ -182,24 +182,25 @@ select
   "asset"."thumbhash",
   "asset"."type",
   "asset"."width",
-  "asset"."height"
+  "asset"."height",
+  smart_search.embedding <=> $1 as "distance"
 from
   "asset"
   inner join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
   inner join "smart_search" on "asset"."id" = "smart_search"."assetId"
 where
-  "asset"."fileCreatedAt" >= $1
-  and "asset_exif"."lensModel" = $2
-  and "asset"."ownerId" = any ($3::uuid[])
-  and "asset"."isFavorite" = $4
+  "asset"."fileCreatedAt" >= $2
+  and "asset_exif"."lensModel" = $3
+  and "asset"."ownerId" = any ($4::uuid[])
+  and "asset"."isFavorite" = $5
   and "asset"."deletedAt" is null
 order by
-  smart_search.embedding <=> $5,
+  smart_search.embedding <=> $6,
   "asset"."id" asc
 limit
-  $6
-offset
   $7
+offset
+  $8
 commit
 
 -- SearchRepository.getEmbedding

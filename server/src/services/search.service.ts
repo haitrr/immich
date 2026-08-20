@@ -242,13 +242,24 @@ export class SearchService extends BaseService {
     return [auth.user.id, ...partnerIds];
   }
 
-  private mapResponse(assets: MapAsset[], nextPage: string | null, options: AssetMapOptions): SearchResponseDto {
+  private mapResponse(
+    assets: Array<MapAsset & { distance?: number }>,
+    nextPage: string | null,
+    options: AssetMapOptions,
+  ): SearchResponseDto {
     return {
       albums: { total: 0, count: 0, items: [], facets: [] },
       assets: {
         total: assets.length,
         count: assets.length,
-        items: assets.map((asset) => mapAsset(asset, options)),
+        items: assets.map((asset) => {
+          const dto = mapAsset(asset, options);
+          // Only smart search rows carry a distance; other callers leave the field absent.
+          if (asset.distance !== undefined) {
+            dto.distance = asset.distance;
+          }
+          return dto;
+        }),
         facets: [],
         nextPage,
       },

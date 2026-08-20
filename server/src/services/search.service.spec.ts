@@ -288,5 +288,48 @@ describe(SearchService.name, () => {
         expect.objectContaining({ language: 'de' }),
       );
     });
+
+    it('should return the cosine distance of each asset, in the order the repository returned them', async () => {
+      const closest = AssetFactory.create();
+      const furthest = AssetFactory.create();
+      mocks.search.searchSmart.mockResolvedValue({
+        hasNextPage: false,
+        items: [
+          { ...closest, distance: 0.123 },
+          { ...furthest, distance: 0.456 },
+        ] as never,
+      });
+
+      const response = await sut.searchSmart(authStub.user1, { query: 'test' });
+
+      expect(response.assets.items).toEqual([
+        expect.objectContaining({ id: closest.id, distance: 0.123 }),
+        expect.objectContaining({ id: furthest.id, distance: 0.456 }),
+      ]);
+    });
+  });
+
+  describe('searchMetadata', () => {
+    it('should not populate distance', async () => {
+      const asset = AssetFactory.create();
+      mocks.search.searchMetadata.mockResolvedValue({ hasNextPage: false, items: [asset] as never });
+
+      const response = await sut.searchMetadata(authStub.user1, {});
+
+      expect(response.assets.items).toHaveLength(1);
+      expect(response.assets.items[0]).not.toHaveProperty('distance');
+    });
+  });
+
+  describe('searchRandom', () => {
+    it('should not populate distance', async () => {
+      const asset = AssetFactory.create();
+      mocks.search.searchRandom.mockResolvedValue([asset] as never);
+
+      const assets = await sut.searchRandom(authStub.user1, {});
+
+      expect(assets).toHaveLength(1);
+      expect(assets[0]).not.toHaveProperty('distance');
+    });
   });
 });

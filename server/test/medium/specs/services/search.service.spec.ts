@@ -3,14 +3,17 @@ import { SearchSuggestionType } from 'src/dtos/search.dto';
 import { AlbumUserRole, AssetVisibility } from 'src/enum';
 import { AccessRepository } from 'src/repositories/access.repository';
 import { AssetRepository } from 'src/repositories/asset.repository';
+import { ConfigRepository } from 'src/repositories/config.repository';
 import { DatabaseRepository } from 'src/repositories/database.repository';
 import { LoggingRepository } from 'src/repositories/logging.repository';
+import { MachineLearningRepository } from 'src/repositories/machine-learning.repository';
 import { PartnerRepository } from 'src/repositories/partner.repository';
 import { PersonRepository } from 'src/repositories/person.repository';
 import { SearchRepository } from 'src/repositories/search.repository';
+import { SystemMetadataRepository } from 'src/repositories/system-metadata.repository';
 import { DB } from 'src/schema';
 import { SearchService } from 'src/services/search.service';
-import { newMediumService } from 'test/medium.factory';
+import { MediumTestContext, newMediumService } from 'test/medium.factory';
 import { factory } from 'test/small.factory';
 import { getKyselyDB } from 'test/utils';
 
@@ -22,13 +25,26 @@ const setup = (db?: Kysely<DB>) => {
     real: [
       AccessRepository,
       AssetRepository,
+      ConfigRepository,
       DatabaseRepository,
       SearchRepository,
       PartnerRepository,
       PersonRepository,
+      SystemMetadataRepository,
     ],
-    mock: [LoggingRepository],
+    mock: [LoggingRepository, MachineLearningRepository],
   });
+};
+
+// a 512 dimension embedding, matching the dimensions of the `smart_search` table
+const newEmbedding = (values: number[]) => {
+  return `[${Array.from({ length: 512 }, (_, index) => values[index] ?? 0).join(',')}]`;
+};
+
+const newAssetWithEmbedding = async (ctx: MediumTestContext, ownerId: string, values: number[]) => {
+  const { asset } = await ctx.newAsset({ ownerId });
+  await ctx.get(SearchRepository).upsert(asset.id, newEmbedding(values));
+  return asset;
 };
 
 beforeAll(async () => {
@@ -61,6 +77,48 @@ describe(SearchService.name, () => {
       expect.objectContaining({ id: assets[0].id }),
       expect.objectContaining({ id: assets[1].id }),
     ]);
+  });
+
+  describe('searchMetadata', () => {
+    it('should not populate distance', async () => {
+      const { sut, ctx } = setup();
+      const { user } = await ctx.newUser();
+
+      await ctx.newAsset({ ownerId: user.id });
+
+      const auth = factory.auth({ user: { id: user.id } });
+
+      const response = await sut.searchMetadata(auth, {});
+
+      expect(response.assets.items.length).toBe(1);
+      expect(response.assets.items[0]).not.toHaveProperty('distance');
+    });
+  });
+
+  describe('searchSmart', () => {
+    it('should return the cosine distance of each asset, ordered ascending', async () => {
+      const { sut, ctx } = setup();
+      const { user } = await ctx.newUser();
+
+      // cosine distance to [1, 0, 0, ...]: 0, ~0.293 and 1 respectively
+      const exact = await newAssetWithEmbedding(ctx, user.id, [1]);
+      const between = await newAssetWithEmbedding(ctx, user.id, [1, 1]);
+      const orthogonal = await newAssetWithEmbedding(ctx, user.id, [0, 1]);
+
+      ctx.getMock(MachineLearningRepository).encodeText.mockResolvedValue(newEmbedding([1]));
+
+      const auth = factory.auth({ user: { id: user.id } });
+
+      const response = await sut.searchSmart(auth, { query: 'test' });
+
+      expect(response.assets.items.map(({ id }) => id)).toEqual([exact.id, between.id, orthogonal.id]);
+
+      const distances = response.assets.items.map(({ distance }) => distance!);
+      expect(distances[0]).toBeCloseTo(0);
+      expect(distances[1]).toBeCloseTo(1 - 1 / Math.SQRT2);
+      expect(distances[2]).toBeCloseTo(1);
+      expect(distances).toEqual([...distances].sort((a, b) => a - b));
+    });
   });
 
   describe('searchStatistics', () => {
