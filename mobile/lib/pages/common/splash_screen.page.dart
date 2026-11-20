@@ -8,7 +8,9 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/locales.dart';
 import 'package:immich_mobile/data/db/main/database.dart';
 import 'package:immich_mobile/domain/models/config/app_config.dart';
+import 'package:immich_mobile/domain/models/events.model.dart';
 import 'package:immich_mobile/domain/models/store.model.dart';
+import 'package:immich_mobile/domain/utils/event_stream.dart';
 import 'package:immich_mobile/entities/store.entity.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/generated/codegen_loader.g.dart';
@@ -295,6 +297,8 @@ class SplashScreenPage extends StatefulHookConsumerWidget {
 }
 
 class SplashScreenPageState extends ConsumerState<SplashScreenPage> {
+  static const _maxSyncDelayForTimeline = Duration(seconds: 3);
+
   final log = Logger("SplashScreenPage");
 
   @override
@@ -309,6 +313,10 @@ class SplashScreenPageState extends ConsumerState<SplashScreenPage> {
     final accessToken = Store.tryGet(StoreKey.accessToken);
 
     if (accessToken != null && serverUrl != null && endpoint != null) {
+      final timelineShown = EventStream.shared.where<TimelineReloadEvent>().first.timeout(
+        _maxSyncDelayForTimeline,
+        onTimeout: () => const TimelineReloadEvent(),
+      );
       final infoProvider = ref.read(serverInfoProvider.notifier);
       final wsProvider = ref.read(websocketProvider.notifier);
       final backgroundManager = ref.read(backgroundSyncProvider);
@@ -341,9 +349,11 @@ class SplashScreenPageState extends ConsumerState<SplashScreenPage> {
                   wsProvider.connect();
                   unawaited(infoProvider.getServerInfo());
 
+                  await timelineShown;
+
                   bool syncSuccess = false;
                   await Future.wait([
-                    backgroundManager.syncLocal(full: true),
+                    backgroundManager.syncLocal().then((_) => backgroundManager.syncLocal(full: true)),
                     backgroundManager.syncRemote().then((success) => syncSuccess = success),
                   ]);
 

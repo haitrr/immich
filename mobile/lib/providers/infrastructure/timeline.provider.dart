@@ -1,6 +1,7 @@
 import 'package:collection/collection.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/services/timeline.service.dart';
+import 'package:immich_mobile/infrastructure/repositories/timeline_bucket_cache.repository.dart';
 import 'package:immich_mobile/presentation/widgets/timeline/timeline.state.dart';
 import 'package:immich_mobile/providers/infrastructure/db.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
@@ -12,8 +13,11 @@ final timelineArgsProvider = Provider.autoDispose<TimelineArgs>(
 
 final timelineServiceProvider = Provider<TimelineService>(
   (ref) {
-    final timelineUsers = ref.watch(timelineUsersProvider).valueOrNull ?? [];
-    final timelineService = ref.watch(timelineFactoryProvider).main(timelineUsers);
+    final timelineUsers = ref.watch(timelineUsersProvider);
+    final timelineFactory = ref.watch(timelineFactoryProvider);
+    final timelineService = timelineUsers.hasValue || timelineUsers.hasError
+        ? timelineFactory.main(timelineUsers.valueOrNull ?? [])
+        : timelineFactory.pendingMain();
     ref.onDispose(timelineService.dispose);
     return timelineService;
   },
@@ -26,7 +30,12 @@ final timelineFactoryProvider = Provider<TimelineFactory>(
   (ref) => TimelineFactory(
     timelineRepository: ref.watch(driftProvider).timelineRepository,
     settingsRepository: ref.watch(settingsProvider),
+    bucketCacheRepository: ref.watch(timelineBucketCacheRepositoryProvider),
   ),
+);
+
+final timelineBucketCacheRepositoryProvider = Provider<TimelineBucketCacheRepository>(
+  (_) => TimelineBucketCacheRepository(),
 );
 
 final timelineUsersProvider = StreamProvider<List<String>>((ref) {

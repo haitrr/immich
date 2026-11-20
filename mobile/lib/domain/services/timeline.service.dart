@@ -10,6 +10,7 @@ import 'package:immich_mobile/domain/models/timeline.model.dart';
 import 'package:immich_mobile/domain/utils/event_stream.dart';
 import 'package:immich_mobile/infrastructure/repositories/settings.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/timeline.repository.dart';
+import 'package:immich_mobile/infrastructure/repositories/timeline_bucket_cache.repository.dart';
 import 'package:immich_mobile/utils/async_mutex.dart';
 
 typedef TimelineAssetSource = Future<List<BaseAsset>> Function(int index, int count);
@@ -41,8 +42,13 @@ enum TimelineOrigin {
 class TimelineFactory {
   final TimelineRepository _timelineRepository;
   final SettingsRepository _settingsRepository;
+  final TimelineBucketCacheRepository? _bucketCacheRepository;
 
-  const TimelineFactory({required this._timelineRepository, required this._settingsRepository});
+  const TimelineFactory({
+    required this._timelineRepository,
+    required this._settingsRepository,
+    this._bucketCacheRepository,
+  });
 
   GroupAssetsBy get groupBy {
     final group = _settingsRepository.appConfig.timeline.groupAssetsBy;
@@ -50,7 +56,46 @@ class TimelineFactory {
     return group == GroupAssetsBy.auto ? GroupAssetsBy.day : group;
   }
 
-  TimelineService main(List<String> timelineUsers) => TimelineService(_timelineRepository.main(timelineUsers, groupBy));
+  TimelineService main(List<String> timelineUsers) {
+    final groupBy = this.groupBy;
+    final query = _timelineRepository.main(timelineUsers, groupBy);
+    final bucketCache = _bucketCacheRepository;
+    if (bucketCache == null) {
+      return TimelineService(query);
+    }
+
+    final cacheKey = '${groupBy.name}:${(List.of(timelineUsers)..sort()).join(',')}';
+    return TimelineService((
+      assetSource: query.assetSource,
+      bucketSource: () => _withCachedBuckets(bucketCache, cacheKey, query.bucketSource),
+      origin: query.origin,
+    ));
+  }
+
+  TimelineService pendingMain() => TimelineService((
+    assetSource: (_, _) async => const <BaseAsset>[],
+    bucketSource: () => Stream<List<Bucket>>.multi((_) {}),
+    origin: TimelineOrigin.main,
+  ));
+
+  static Stream<List<Bucket>> _withCachedBuckets(
+    TimelineBucketCacheRepository bucketCache,
+    String cacheKey,
+    TimelineBucketSource bucketSource,
+  ) async* {
+    final cachedBuckets = await bucketCache.read(cacheKey);
+    if (cachedBuckets != null) {
+      yield cachedBuckets;
+    }
+
+    yield* bucketSource().map((buckets) {
+      final timeBuckets = buckets.whereType<TimeBucket>().toList(growable: false);
+      if (timeBuckets.length == buckets.length) {
+        unawaited(bucketCache.write(cacheKey, timeBuckets));
+      }
+      return buckets;
+    });
+  }
 
   TimelineService localAlbum({required String albumId}) =>
       TimelineService(_timelineRepository.localAlbum(albumId, groupBy));
